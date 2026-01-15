@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Neon Stack - Cyberpunk Stacker</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Orbitron', sans-serif;
+            touch-action: none; /* 禁止移动端默认手势 */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        #score {
+            font-size: 5rem;
+            color: rgba(255, 255, 255, 0.9);
+            margin-top: 15vh;
+            text-shadow: 0 0 10px #fff, 0 0 20px #0ff;
+            transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            font-variant-numeric: tabular-nums;
+        }
+
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: auto;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            z-index: 20;
+            min-width: 280px;
+        }
+
+        .hidden {
+            display: none !important;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        h1 {
+            color: #0ff;
+            text-shadow: 0 0 15px #0ff;
+            margin: 0 0 20px 0;
+            font-size: 2.2rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        p {
+            color: #aaa;
+            margin-bottom: 30px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        button {
+            background: transparent;
+            color: #fff;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.2rem;
+            padding: 15px 50px;
+            border: 2px solid #f0f;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(255, 0, 255, 0.4);
+            text-shadow: 0 0 5px #fff;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background: rgba(255, 0, 255, 0.1);
+            box-shadow: 0 0 25px rgba(255, 0, 255, 0.6);
+        }
+
+        button:active {
+            transform: scale(0.95);
+            background: #f0f;
+            color: #000;
+        }
+
+        /* Perfect 特效文字 */
+        .floating-text {
+            position: absolute;
+            color: #fff;
+            font-weight: bold;
+            font-size: 2.5rem;
+            animation: floatUp 0.8s ease-out forwards;
+            text-shadow: 0 0 10px #fff, 0 0 20px #ff00de, 0 0 40px #ff00de;
+            pointer-events: none;
+            z-index: 15;
+            white-space: nowrap;
+        }
+
+        @keyframes floatUp {
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+            20% { opacity: 1; transform: translate(-50%, -100%) scale(1.2); }
+            100% { opacity: 0; transform: translate(-50%, -250%) scale(1); }
+        }
+
+        /* 背景网格装饰 */
+        .grid-bg {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: 
+                linear-gradient(transparent 95%, rgba(0, 255, 255, 0.1) 95%),
+                linear-gradient(90deg, transparent 95%, rgba(0, 255, 255, 0.1) 95%);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: -1;
+            perspective: 1000px;
+            transform: perspective(500px) rotateX(60deg) scale(2);
+            transform-origin: center top;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="grid-bg"></div>
+
+    <div id="ui-layer">
+        <div id="score" class="hidden">0</div>
+    </div>
+
+    <div id="start-screen">
+        <h1>Neon Stack</h1>
+        <p>TAP SCREEN or PRESS SPACE<br>TO STACK BLOCKS</p>
+        <button id="start-btn">START GAME</button>
+    </div>
+
+    <div id="game-over-screen" class="hidden">
+        <h1>SYSTEM FAILURE</h1>
+        <p>FINAL SCORE: <span id="final-score" style="color:#fff; font-size:1.5em">0</span></p>
+        <button id="restart-btn">REBOOT</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+/**
+ * 游戏配置与全局变量
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false }); // 优化性能
+const scoreEl = document.getElementById('score');
+const startScreen = document.getElementById('start-screen');
+const gameOverScreen = document.getElementById('game-over-screen');
+const finalScoreEl = document.getElementById('final-score');
+
+// 游戏常量
+const BLOCK_HEIGHT = 20; // 单个方块的视觉高度
+const MOVE_SPEED_BASE = 3.5; 
+const DEFAULT_SIZE = 160; // 初始方块大小
+const ISO_ANGLE = 0.5; // 等轴测角度
+
+// 游戏状态
+let state = {
+    blocks: [],
+    debris: [], // 切掉的碎片
+    currentBlock: null,
+    score: 0,
+    cameraY: 0,
+    targetCameraY: 0,
+    mode: 'MENU', // MENU, PLAYING, GAMEOVER
+    axis: 'x', // 当前移动轴 'x' 或 'z'
+    speed: MOVE_SPEED_BASE,
+    hue: 0,
+    gameStartTime: 0 // 新增：记录游戏开始时间
+};
+
+/**
+ * 音效系统 (Web Audio API)
+ */
+const AudioSys = {
+    ctx: null,
+    init: function() {
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+    },
+    playTone: function(freq, type = 'sine', duration = 0.1, vol = 0.1) {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        const now = this.ctx.currentTime;
+        gain.gain.setValueAtTime(vol, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+        
+        osc.start(now);
+        osc.stop(now + duration);
+    },
+    playSuccess: function(isPerfect) {
+        const scale = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25]; 
+        const noteIndex = state.score % scale.length;
+        const baseFreq = scale[noteIndex] * (1 + Math.floor(state.score / scale.length) * 0.5);
+        
+        this.playTone(baseFreq, 'triangle', 0.2, 0.15);
+        
+        if(isPerfect) {
+            setTimeout(() => this.playTone(baseFreq * 2, 'sine', 0.3, 0.1), 50);
+            setTimeout(() => this.playTone(baseFreq * 1.5, 'sine', 0.4, 0.05), 100);
+        }
+    },
+    playCut: function() {
+        this.playTone(120, 'sawtooth', 0.1, 0.08);
+    },
+    playGameOver: function() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const now = this.ctx.currentTime;
+        
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(50, now + 0.8);
+        osc.type = 'sawtooth';
+        
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.8);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.8);
+    }
+};
+
+/**
+ * 核心逻辑类
+ */
+class Block {
+    constructor(x, y, z, w, d, color) {
+        this.x = x;
+        this.y = y; // 逻辑层高
+        this.z = z;
+        this.w = w; // 宽
+        this.d = d; // 深
+        this.color = color;
+        this.vx = 0;
+        this.vz = 0;
+    }
+
+    draw() {
+        const isoX = (this.x - this.z) * Math.cos(ISO_ANGLE);
+        const isoY = this.y - (this.x + this.z) * Math.sin(ISO_ANGLE) + state.cameraY;
+
+        const p1 = project(this.x, this.y, this.z);
+        const p2 = project(this.x + this.w, this.y, this.z);
+        const p3 = project(this.x + this.w, this.y, this.z + this.d);
+        const p4 = project(this.x, this.y, this.z + this.d);
+
+        ctx.lineWidth = 1.5;
+        ctx.lineJoin = 'round';
+
+        const h = BLOCK_HEIGHT;
+        
+        // 右面
+        ctx.fillStyle = darken(this.color, 0.5);
+        ctx.beginPath();
+        ctx.moveTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.lineTo(p3.x, p3.y + h);
+        ctx.lineTo(p2.x, p2.y + h);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.stroke();
+
+        // 左面
+        ctx.fillStyle = darken(this.color, 0.7);
+        ctx.beginPath();
+        ctx.moveTo(p3.x, p3.y);
+        ctx.lineTo(p4.x, p4.y);
+        ctx.lineTo(p4.x, p4.y + h);
+        ctx.lineTo(p3.x, p3.y + h);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // 顶面
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.lineTo(p4.x, p4.y);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fill();
+    }
+}
+
+class Debris extends Block {
+    constructor(x, y, z, w, d, color) {
+        super(x, y, z, w, d, color);
+        this.vy = 0;
+        this.ay = 0.8;
+        this.life = 1.0;
+    }
+    
+    update() {
+        this.vy += this.ay;
+        this.y += this.vy;
+        this.life -= 0.02;
+    }
+
+    draw() {
+        if (this.life <= 0) return;
+        ctx.globalAlpha = this.life;
+        super.draw();
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+/**
+ * 辅助函数
+ */
+function project(x, y, z) {
+    const cx = canvas.width / 2;
+    const startY = canvas.height * 0.7; 
+    const sx = cx + (x - z) * Math.cos(ISO_ANGLE) * 1.5; 
+    const sy = startY - y + (x + z) * Math.sin(ISO_ANGLE) * 0.8 + state.cameraY;
+    return { x: sx, y: sy };
+}
+
+function darken(color, factor) {
+    let parts = color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    if (!parts) return color;
+    let l = Math.max(0, parseInt(parts[3]) * factor);
+    return `hsl(${parts[1]}, ${parts[2]}%, ${l}%)`;
+}
+
+/**
+ * 游戏流程
+ */
+function initGame() {
+    resize();
+    state.blocks = [];
+    state.debris = [];
+    state.score = 0;
+    state.hue = 200;
+    state.speed = MOVE_SPEED_BASE;
+    state.cameraY = 0;
+    state.targetCameraY = 0;
+    state.gameStartTime = Date.now(); // 记录开始时间
+    scoreEl.innerText = 0;
+
+    const baseBlock = new Block(-DEFAULT_SIZE/2, 0, -DEFAULT_SIZE/2, DEFAULT_SIZE, DEFAULT_SIZE, `hsl(${state.hue}, 80%, 50%)`);
+    state.blocks.push(baseBlock);
+    
+    spawnNextBlock();
+    
+    state.mode = 'PLAYING';
+    loop();
+}
+
+function spawnNextBlock() {
+    const prevBlock = state.blocks[state.blocks.length - 1];
+    
+    state.hue = (state.hue + 8) % 360;
+    const color = `hsl(${state.hue}, 80%, 50%)`;
+    
+    const level = state.blocks.length;
+    const y = level * BLOCK_HEIGHT; 
+    
+    state.axis = (level % 2 === 0) ? 'x' : 'z';
+    
+    let x, z;
+    // 重要修改：将生成距离从 350 减少到 260
+    // 这样方块几乎立刻就会到达有效区域，无需漫长等待
+    const dist = 260; 
+    
+    if (state.axis === 'x') {
+        x = -dist; 
+        z = prevBlock.z;
+    } else {
+        x = prevBlock.x;
+        z = -dist;
+    }
+    
+    state.currentBlock = new Block(x, y, z, prevBlock.w, prevBlock.d, color);
+    state.currentBlock.vx = (state.axis === 'x') ? state.speed : 0;
+    state.currentBlock.vz = (state.axis === 'z') ? state.speed : 0;
+}
+
+function gameOver() {
+    state.mode = 'GAMEOVER';
+    AudioSys.playGameOver();
+    finalScoreEl.innerText = state.score;
+    gameOverScreen.classList.remove('hidden');
+    scoreEl.classList.add('hidden');
+}
+
+function placeBlock() {
+    if (state.mode !== 'PLAYING') return;
+
+    // 修复：添加500ms冷却时间，防止游戏刚开始时的误触或双击
+    if (Date.now() - state.gameStartTime < 500) return;
+
+    const curr = state.currentBlock;
+    const prev = state.blocks[state.blocks.length - 1];
+    
+    const tolerance = 5; 
+    let isPerfect = false;
+
+    let diff = (state.axis === 'x') ? (curr.x - prev.x) : (curr.z - prev.z);
+
+    if (Math.abs(diff) < tolerance) {
+        isPerfect = true;
+        diff = 0;
+        if (state.axis === 'x') curr.x = prev.x;
+        else curr.z = prev.z;
+        
+        showPerfectEffect();
+        AudioSys.playSuccess(true);
+    } else {
+        AudioSys.playSuccess(false);
+        AudioSys.playCut();
+        
+        if (state.axis === 'x') {
+            if (Math.abs(diff) >= prev.w) return gameOver();
+
+            if (diff > 0) {
+                const remainingW = prev.w - diff;
+                curr.w = remainingW;
+                createDebris(curr.x + remainingW, curr.y, curr.z, diff, curr.d, curr.color);
+            } else {
+                const remainingW = prev.w + diff; 
+                createDebris(curr.x, curr.y, curr.z, -diff, curr.d, curr.color);
+                curr.x = prev.x; 
+                curr.w = remainingW;
+            }
+        } else {
+            if (Math.abs(diff) >= prev.d) return gameOver();
+
+            if (diff > 0) {
+                const remainingD = prev.d - diff;
+                curr.d = remainingD;
+                createDebris(curr.x, curr.y, curr.z + remainingD, curr.w, diff, curr.color);
+            } else {
+                const remainingD = prev.d + diff;
+                createDebris(curr.x, curr.y, curr.z, curr.w, -diff, curr.color);
+                curr.z = prev.z;
+                curr.d = remainingD;
+            }
+        }
+    }
+
+    // 安全检查：如果切除后尺寸太小，也算失败
+    if (curr.w <= 0 || curr.d <= 0) return gameOver();
+
+    state.blocks.push(curr);
+    state.score++;
+    scoreEl.innerText = state.score;
+    
+    scoreEl.style.transform = 'scale(1.3)';
+    setTimeout(() => scoreEl.style.transform = 'scale(1)', 150);
+
+    state.targetCameraY -= BLOCK_HEIGHT;
+    state.speed += 0.1;
+
+    spawnNextBlock();
+}
+
+function createDebris(x, y, z, w, d, color) {
+    const debris = new Debris(x, y, z, w, d, color);
+    state.debris.push(debris);
+}
+
+function showPerfectEffect() {
+    const div = document.createElement('div');
+    div.innerText = 'PERFECT';
+    div.className = 'floating-text';
+    div.style.left = '50%';
+    div.style.top = '35%';
+    document.body.appendChild(div);
+    setTimeout(() => div.remove(), 800);
+    
+    const flash = document.createElement('div');
+    flash.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:white;opacity:0.2;pointer-events:none;z-index:99;';
+    document.body.appendChild(flash);
+    setTimeout(() => flash.remove(), 80);
+}
+
+/**
+ * 渲染循环
+ */
+function loop() {
+    requestAnimationFrame(loop);
+
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    state.cameraY += (state.targetCameraY - state.cameraY) * 0.1;
+
+    if (state.mode === 'PLAYING') {
+        const curr = state.currentBlock;
+        if (curr) {
+            if (state.axis === 'x') {
+                curr.x += curr.vx;
+                if (curr.x > 300 || curr.x < -300) curr.vx *= -1;
+            } else {
+                curr.z += curr.vz;
+                if (curr.z > 300 || curr.z < -300) curr.vz *= -1;
+            }
+        }
+    }
+
+    state.blocks.forEach(b => b.draw());
+    if (state.mode === 'PLAYING' && state.currentBlock) {
+        state.currentBlock.draw();
+    }
+
+    for (let i = state.debris.length - 1; i >= 0; i--) {
+        const d = state.debris[i];
+        d.update();
+        d.draw();
+        if (d.y > canvas.height + 500 || d.life <= 0) {
+            state.debris.splice(i, 1);
+        }
+    }
+}
+
+/**
+ * 输入处理
+ */
+function handleInput(e) {
+    if(e.type === 'touchstart') e.preventDefault();
+    if(e.type === 'keydown' && e.code !== 'Space') return;
+    
+    if (state.mode === 'MENU') {
+        AudioSys.init();
+        startScreen.classList.add('hidden');
+        scoreEl.classList.remove('hidden');
+        initGame();
+    } else if (state.mode === 'GAMEOVER') {
+        // 防止游戏刚结束时立刻误触重启
+        if (Date.now() - state.gameStartTime > 500) {
+            // 这里不做处理，等待点击按钮
+        }
+    } else {
+        placeBlock();
+    }
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') handleInput(e);
+});
+
+canvas.addEventListener('touchstart', handleInput, { passive: false });
+canvas.addEventListener('mousedown', handleInput);
+
+document.getElementById('start-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    AudioSys.init();
+    startScreen.classList.add('hidden');
+    scoreEl.classList.remove('hidden');
+    initGame();
+});
+
+document.getElementById('restart-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    gameOverScreen.classList.add('hidden');
+    scoreEl.classList.remove('hidden');
+    initGame();
+});
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+</script>
+</body>
+</html>
